@@ -52,8 +52,8 @@ from nanobot.utils.helpers import estimate_prompt_tokens
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_OPENAI_CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models"
-# The server gates model visibility by client version; older catalogs omit GPT-6 Sol/Luna.
-OPENAI_CODEX_CATALOG_CLIENT_VERSION = "0.158.0"
+# Use an ungated catalog version for discovery, not inference compatibility.
+OPENAI_CODEX_CATALOG_CLIENT_VERSION = "99.99.99"
 DEFAULT_ORIGINATOR = "nanobot"
 _COMPACTION_RETAINED_CHAR_BUDGET = 256_000
 
@@ -786,13 +786,20 @@ def _should_retry_status(
 
 def get_openai_codex_model_catalog(
     proxy: str | None = None,
+    *,
+    client_version: str | None = None,
 ) -> OAuthModelCatalogSnapshot:
     storage = FileTokenStorage(token_filename=OPENAI_CODEX_PROVIDER.token_filename)
     token = storage.load()
     account_id = getattr(token, "account_id", None)
     account_key = _catalog_account_key(account_id)
-    cache_key = f"{storage.get_token_path()}\0{account_key}\0{proxy or ''}"
-    return _OPENAI_CODEX_MODEL_CATALOG.get(cache_key=cache_key, proxy=proxy)
+    version = client_version or OPENAI_CODEX_CATALOG_CLIENT_VERSION
+    cache_key = f"{storage.get_token_path()}\0{account_key}\0{proxy or ''}\0{version}"
+    return _OPENAI_CODEX_MODEL_CATALOG.get(
+        cache_key=cache_key,
+        proxy=proxy,
+        fetch=lambda p: _fetch_openai_codex_models(p, client_version=version),
+    )
 
 
 def invalidate_openai_codex_model_catalog() -> None:
@@ -818,7 +825,11 @@ def _codex_login_required(exc: RuntimeError) -> bool:
     return False
 
 
-def _fetch_openai_codex_models(proxy: str | None) -> tuple[ProviderModelSpec, ...]:
+def _fetch_openai_codex_models(
+    proxy: str | None,
+    *,
+    client_version: str = OPENAI_CODEX_CATALOG_CLIENT_VERSION,
+) -> tuple[ProviderModelSpec, ...]:
     try:
         token = get_codex_token(proxy=proxy)
     except RuntimeError as exc:
@@ -834,7 +845,7 @@ def _fetch_openai_codex_models(proxy: str | None) -> tuple[ProviderModelSpec, ..
     with httpx.Client(**client_kwargs) as client:
         response = client.get(
             DEFAULT_OPENAI_CODEX_MODELS_URL,
-            params={"client_version": OPENAI_CODEX_CATALOG_CLIENT_VERSION},
+            params={"client_version": client_version},
             headers={
                 "Authorization": f"Bearer {token.access}",
                 "chatgpt-account-id": account_id,

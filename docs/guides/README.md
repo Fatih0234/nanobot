@@ -45,6 +45,7 @@ Use **Settings → Channels** in the WebUI for guided setup. These guides explai
 | Enable web search | [Configure web search](./configure-web-search.md) |
 | Add model fallback | [Configure model fallback](./configure-model-fallback.md) |
 | Add an OpenAI-compatible provider | [Configure an OpenAI-compatible provider](./configure-openai-compatible-provider.md) |
+| Pin the Codex model catalog version | [Configure Codex model discovery](./configure-codex-model-discovery.md) |
 | Improve Ollama tool prompt-cache reuse | [Configure Ollama prompt caching](./configure-ollama-prompt-cache.md) |
 | Add Langfuse tracing | [Configure Langfuse observability](./configure-langfuse-observability.md) |
 | Secure local tools | [Secure a local AI agent](./secure-local-ai-agent.md) |

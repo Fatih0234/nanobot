@@ -113,7 +113,13 @@ class OAuthModelCatalog:
         self._inflight: set[str] = set()
         self._generation = 0
 
-    def get(self, *, cache_key: str, proxy: str | None = None) -> OAuthModelCatalogSnapshot:
+    def get(
+        self,
+        *,
+        cache_key: str,
+        proxy: str | None = None,
+        fetch: Callable[[str | None], Sequence[ProviderModelSpec]] | None = None,
+    ) -> OAuthModelCatalogSnapshot:
         """Return a fresh catalog, sharing concurrent work and retaining a fallback."""
         with self._condition:
             generation = self._generation
@@ -130,7 +136,7 @@ class OAuthModelCatalog:
             self._inflight.add(cache_key)
 
         try:
-            models = tuple(self._fetch(proxy))
+            models = tuple((fetch or self._fetch)(proxy))
             if not models:
                 raise ValueError("provider returned an empty model catalog")
         except Exception as exc:
@@ -235,12 +241,13 @@ def get_oauth_model_catalog(
     provider_name: str,
     *,
     proxy: str | None = None,
+    client_version: str | None = None,
 ) -> OAuthModelCatalogSnapshot:
     """Discover models through the owning provider module."""
     if provider_name == "openai_codex":
         from nanobot.providers.openai_codex_provider import get_openai_codex_model_catalog
 
-        return get_openai_codex_model_catalog(proxy)
+        return get_openai_codex_model_catalog(proxy, client_version=client_version)
     if provider_name == "xai_grok":
         from nanobot.providers.xai_grok_provider import get_xai_grok_model_catalog
 
