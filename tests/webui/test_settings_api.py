@@ -13,10 +13,7 @@ from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfi
 from nanobot.llm_usage import get_llm_usage_store
 from nanobot.llm_usage.models import LLMCallRecord
 from nanobot.providers.base import LLMUsage
-from nanobot.providers.oauth_model_catalog import (
-    OAuthModelCatalogSnapshot,
-    invalidate_oauth_model_catalog,
-)
+from nanobot.providers.oauth_model_catalog import OAuthModelCatalogSnapshot
 from nanobot.providers.registry import ProviderModelSpec, find_by_name
 from nanobot.session.manager import SessionManager
 from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
@@ -1003,51 +1000,6 @@ def test_update_provider_settings_updates_and_clears_oauth_proxy(
     providers = {row["name"]: row for row in cleared["providers"]}
     assert providers[provider_name]["proxy"] is None
     assert getattr(load_config(config_path).providers, config_attr).proxy is None
-
-
-def test_update_provider_settings_preserves_codex_catalog_version_pin(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    config.providers.openai_codex.catalog_client_version = "0.159.0"
-    config.providers.openai_codex.api_key = "oauth-placeholder-secret"
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-    monkeypatch.setattr(
-        "nanobot.webui.settings_api._oauth_provider_status",
-        lambda _spec: {
-            "configured": False,
-            "account": None,
-            "expires_at": None,
-            "login_supported": True,
-        },
-    )
-
-    payload = update_provider_settings(
-        {
-            "provider": ["openai_codex"],
-            "proxy": ["http://127.0.0.1:7890"],
-            "extraBody": [json.dumps({"tools": []})],
-        }
-    )
-
-    providers = {row["name"]: row for row in payload["providers"]}
-    assert providers["openai_codex"]["proxy"] == "http://127.0.0.1:7890"
-    assert providers["openai_codex"]["extra_body"] == {"tools": []}
-    saved_text = config_path.read_text(encoding="utf-8")
-    assert "oauth-placeholder-secret" not in saved_text
-    reloaded = load_config(config_path)
-    assert reloaded.providers.openai_codex.catalog_client_version == "0.159.0"
-    assert reloaded.providers.openai_codex.proxy == "http://127.0.0.1:7890"
-    assert reloaded.providers.openai_codex.extra_body == {"tools": []}
-    assert reloaded.providers.openai_codex.api_key is None
-
-    update_provider_settings({"provider": ["openai_codex"], "proxy": ["  "]})
-    reloaded = load_config(config_path)
-    assert reloaded.providers.openai_codex.proxy is None
-    assert reloaded.providers.openai_codex.catalog_client_version == "0.159.0"
 
 
 def test_update_provider_settings_keeps_oauth_credentials_read_only(
@@ -2166,118 +2118,6 @@ def test_provider_models_payload_returns_online_openai_codex_models(
         "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"],
         "supports_backend_search": False,
     }
-
-
-def _capture_catalog_kwargs(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
-    calls: list[dict] = []
-    monkeypatch.setattr(
-        "nanobot.webui.settings_models.get_oauth_model_catalog",
-        lambda *_args, **kwargs: calls.append(kwargs)
-        or OAuthModelCatalogSnapshot(
-            models=(ProviderModelSpec(id="provider/model"),),
-            source="remote",
-            fetched_at=1,
-        ),
-    )
-    return calls
-
-
-def _codex_config_file(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-    *,
-    catalog_client_version: str | None,
-) -> None:
-    config_path = tmp_path / "config.json"
-    config = Config()
-    if catalog_client_version is not None:
-        config.providers.openai_codex.catalog_client_version = catalog_client_version
-    save_config(config, config_path)
-    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
-
-
-@pytest.mark.parametrize("override,expected", [(None, None), ("0.159.0", "0.159.0")])
-def test_provider_models_payload_forwards_codex_client_version(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-    override,
-    expected,
-) -> None:
-    calls = _capture_catalog_kwargs(monkeypatch)
-    _codex_config_file(monkeypatch, tmp_path, catalog_client_version=override)
-
-    payload = provider_models_payload({"provider": ["openai_codex"]})
-
-    assert payload["status"] == "available"
-    assert calls[-1]["client_version"] == expected
-
-
-@pytest.mark.parametrize("provider", ["xai_grok", "github_copilot"])
-def test_provider_models_payload_does_not_forward_client_version_to_other_hybrids(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-    provider,
-) -> None:
-    calls = _capture_catalog_kwargs(monkeypatch)
-    _codex_config_file(monkeypatch, tmp_path, catalog_client_version="0.159.0")
-
-    payload = provider_models_payload({"provider": [provider]})
-
-    assert payload["status"] == "available"
-    assert "client_version" not in calls[-1]
-
-
-def test_provider_models_payload_threads_codex_version_to_http(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    invalidate_oauth_model_catalog("openai_codex")
-    requested: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requested.append(request.url.params["client_version"])
-        return httpx.Response(
-            200,
-            json={"models": [{"slug": "gpt-pinned", "display_name": "Pinned"}]},
-            request=request,
-        )
-
-    original_client = httpx.Client
-
-    def fake_client(**kwargs: object) -> httpx.Client:
-        return original_client(
-            transport=httpx.MockTransport(handler),
-            timeout=kwargs["timeout"],
-            follow_redirects=kwargs["follow_redirects"],
-        )
-
-    class Storage:
-        def load(self):
-            return SimpleNamespace(access="secret", account_id="account-42")
-
-        def get_token_path(self):
-            return tmp_path / "auth" / "openai-codex.json"
-
-    monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.FileTokenStorage",
-        lambda **_kwargs: Storage(),
-    )
-    monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.get_codex_token",
-        lambda **_kwargs: SimpleNamespace(access="secret", account_id="account-42"),
-    )
-    monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.httpx.Client", fake_client,
-    )
-    _codex_config_file(monkeypatch, tmp_path, catalog_client_version="0.159.0")
-
-    payload = provider_models_payload({"provider": ["openai_codex"]})
-
-    assert payload["status"] == "available"
-    assert payload["source"] == "remote"
-    assert [model["id"] for model in payload["models"]] == ["openai-codex/gpt-pinned"]
-    assert requested == ["0.159.0"]
-    invalidate_oauth_model_catalog("openai_codex")
 
 
 @pytest.mark.parametrize("source", ["stale", "fallback"])

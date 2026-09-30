@@ -147,7 +147,6 @@ def test_xai_catalog_fetches_remote_models_and_reuses_capability_metadata(
         ("gpt-6-astra", "GPT-6-Astra"),
         ("gpt-6-sol", "GPT-6-Sol"),
         ("gpt-6-luna", "GPT-6-Luna"),
-        ("gpt-6.1-sol", "GPT-6.1-Sol"),
     ],
 )
 def test_openai_codex_catalog_uses_account_catalog_and_filters_hidden_models(
@@ -232,111 +231,9 @@ def test_openai_codex_catalog_uses_account_catalog_and_filters_hidden_models(
     assert isinstance(request, httpx.Request)
     assert request.url.copy_with(query=None) == httpx.URL(DEFAULT_OPENAI_CODEX_MODELS_URL)
     # Assert the validated wire version, not the same constant used by the request.
-    assert request.url.params["client_version"] == "99.99.99"
+    assert request.url.params["client_version"] == "0.158.0"
     assert request.headers["Authorization"] == "Bearer secret"
     assert request.headers["chatgpt-account-id"] == "account-42"
-
-
-def _patch_codex_catalog_http(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    handler,
-    captured: dict[str, object],
-) -> None:
-    original_client = httpx.Client
-
-    def fake_client(**kwargs: object) -> httpx.Client:
-        captured["kwargs"] = kwargs
-        return original_client(
-            transport=httpx.MockTransport(handler),
-            timeout=kwargs["timeout"],
-            follow_redirects=kwargs["follow_redirects"],
-        )
-
-    class Storage:
-        def load(self) -> SimpleNamespace:
-            return SimpleNamespace(access="secret", account_id="account-42")
-
-        def get_token_path(self) -> Path:
-            return tmp_path / "auth" / "openai-codex.json"
-
-    monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.FileTokenStorage",
-        lambda **_kwargs: Storage(),
-    )
-    monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.get_codex_token",
-        lambda **_kwargs: SimpleNamespace(access="secret", account_id="account-42"),
-    )
-    monkeypatch.setattr("nanobot.providers.openai_codex_provider.httpx.Client", fake_client)
-
-
-def test_codex_catalog_version_override_and_cache_isolation(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    requested: list[str] = []
-    responses = {
-        "99.99.99": [{"slug": "gpt-sentinel", "display_name": "Sentinel"}],
-        "0.159.0": [{"slug": "gpt-pinned", "display_name": "Pinned"}],
-    }
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        version = request.url.params["client_version"]
-        requested.append(version)
-        return httpx.Response(200, json={"models": responses[version]}, request=request)
-
-    _patch_codex_catalog_http(monkeypatch, tmp_path, handler, {})
-
-    sentinel = get_oauth_model_catalog("openai_codex")
-    assert [model.id for model in sentinel.models] == ["openai-codex/gpt-sentinel"]
-    assert requested == ["99.99.99"]
-
-    cached = get_oauth_model_catalog("openai_codex")
-    assert cached.source == "cache"
-    assert requested == ["99.99.99"]
-
-    pinned = get_oauth_model_catalog("openai_codex", client_version="0.159.0")
-    assert [model.id for model in pinned.models] == ["openai-codex/gpt-pinned"]
-    assert requested == ["99.99.99", "0.159.0"]
-
-    sentinel_again = get_oauth_model_catalog("openai_codex")
-    assert sentinel_again.source == "cache"
-    assert [model.id for model in sentinel_again.models] == ["openai-codex/gpt-sentinel"]
-    assert requested == ["99.99.99", "0.159.0"]
-
-    invalidate_oauth_model_catalog("openai_codex")
-    refetched = get_oauth_model_catalog("openai_codex")
-    refetched_pinned = get_oauth_model_catalog("openai_codex", client_version="0.159.0")
-    assert requested == ["99.99.99", "0.159.0", "99.99.99", "0.159.0"]
-    assert [model.id for model in refetched.models] == ["openai-codex/gpt-sentinel"]
-    assert [model.id for model in refetched_pinned.models] == ["openai-codex/gpt-pinned"]
-
-
-def test_catalog_get_uses_optional_fetch_override_without_replacing_default() -> None:
-    calls: list[str] = []
-
-    def default_fetch(_proxy: str | None) -> tuple[ProviderModelSpec, ...]:
-        calls.append("default")
-        return (ProviderModelSpec(id="provider/default"),)
-
-    def override_fetch(_proxy: str | None) -> tuple[ProviderModelSpec, ...]:
-        calls.append("override")
-        return (ProviderModelSpec(id="provider/override"),)
-
-    catalog = OAuthModelCatalog(
-        fallback_models=(_fallback_model(),),
-        fetch=default_fetch,
-    )
-
-    overridden = catalog.get(cache_key="shared", fetch=override_fetch)
-    assert [model.id for model in overridden.models] == ["provider/override"]
-    assert catalog._fetch is default_fetch
-
-    catalog.invalidate()
-    restored = catalog.get(cache_key="shared")
-    assert [model.id for model in restored.models] == ["provider/default"]
-    assert calls == ["override", "default"]
 
 
 @pytest.mark.parametrize("detail", [

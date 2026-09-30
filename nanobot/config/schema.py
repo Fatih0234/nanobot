@@ -230,15 +230,6 @@ class ProviderConfig(Base):
         return v
 
 
-class OpenAICodexProviderConfig(ProviderConfig):
-    """OpenAI Codex provider configuration."""
-
-    catalog_client_version: str | None = Field(
-        default=None,
-        pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$",
-    )
-
-
 class BedrockProviderConfig(ProviderConfig):
     """AWS Bedrock Runtime provider configuration."""
 
@@ -293,7 +284,7 @@ class ProvidersConfig(Base):
     volcengine_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # VolcEngine Coding Plan
     byteplus: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus (VolcEngine international)
     byteplus_coding_plan: ProviderConfig = Field(default_factory=ProviderConfig)  # BytePlus Coding Plan
-    openai_codex: OpenAICodexProviderConfig = Field(default_factory=OpenAICodexProviderConfig, exclude=True)  # OpenAI Codex (OAuth)
+    openai_codex: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # OpenAI Codex (OAuth)
     xai_grok: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # xAI Grok (OAuth)
     github_copilot: ProviderConfig = Field(default_factory=ProviderConfig, exclude=True)  # Github Copilot (OAuth)
     qianfan: ProviderConfig = Field(default_factory=ProviderConfig)  # Qianfan (百度千帆)

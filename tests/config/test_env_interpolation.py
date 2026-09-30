@@ -1,7 +1,6 @@
 import json
 
 import pytest
-from pydantic import ValidationError
 
 from nanobot.config.errors import ConfigLoadError
 from nanobot.config.loader import (
@@ -287,77 +286,3 @@ class TestResolveConfig:
 
         assert resolved.providers.groq.api_key == "resolved-key"
         assert resolved.providers.openai_codex.api_key == "secret"
-
-
-class TestCodexCatalogClientVersion:
-    def test_defaults_to_none(self):
-        assert Config().providers.openai_codex.catalog_client_version is None
-
-    @pytest.mark.parametrize("key", ["catalogClientVersion", "catalog_client_version"])
-    def test_accepts_strict_version_in_camel_or_snake(self, key):
-        config = Config.model_validate(
-            {"providers": {"openaiCodex": {key: "0.159.0"}}}
-        )
-        assert config.providers.openai_codex.catalog_client_version == "0.159.0"
-
-    @pytest.mark.parametrize("value", [
-        "",
-        "latest",
-        "0.159",
-        "0.159.0-beta",
-        "-1.2.3",
-        " 0.159.0",
-        "0.159.0 ",
-        "0.159.0\n",
-        "01.2.3",
-        "${CODEX_VERSION}",
-        "https://chatgpt.com/backend-api/codex/models",
-    ])
-    def test_rejects_non_version_values(self, value):
-        with pytest.raises(ValidationError):
-            Config.model_validate(
-                {"providers": {"openaiCodex": {"catalogClientVersion": value}}}
-            )
-
-    def test_save_preserves_override_without_credentials(self, tmp_path):
-        config_path = tmp_path / "config.json"
-        proxy = "http://127.0.0.1:23458"
-        config = Config.model_validate(
-            {
-                "providers": {
-                    "openaiCodex": {
-                        "apiKey": "codex-secret",
-                        "proxy": proxy,
-                        "extraBody": {"service_tier": "priority"},
-                        "catalogClientVersion": "0.159.0",
-                    }
-                }
-            }
-        )
-
-        save_config(config, config_path)
-
-        saved = json.loads(config_path.read_text(encoding="utf-8"))
-        assert saved["providers"]["openaiCodex"] == {
-            "catalogClientVersion": "0.159.0",
-            "extraBody": {"service_tier": "priority"},
-            "proxy": proxy,
-        }
-        assert "codex-secret" not in config_path.read_text(encoding="utf-8")
-
-        reloaded = load_config(config_path)
-        assert reloaded.providers.openai_codex.catalog_client_version == "0.159.0"
-        assert reloaded.providers.openai_codex.proxy == proxy
-        assert reloaded.providers.openai_codex.extra_body == {"service_tier": "priority"}
-        assert reloaded.providers.openai_codex.api_key is None
-
-    def test_default_save_omits_version_field(self, tmp_path):
-        config_path = tmp_path / "config.json"
-        config = Config.model_validate(
-            {"providers": {"openaiCodex": {"proxy": "http://127.0.0.1:23458"}}}
-        )
-
-        save_config(config, config_path)
-
-        saved = json.loads(config_path.read_text(encoding="utf-8"))
-        assert saved["providers"]["openaiCodex"] == {"proxy": "http://127.0.0.1:23458"}

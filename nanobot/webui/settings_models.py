@@ -667,14 +667,7 @@ def provider_models_payload(
         }
     if catalog_kind == "hybrid":
         proxy = _resolve_env_placeholders(provider_config.proxy)
-        if spec.name == "openai_codex":
-            catalog = get_oauth_model_catalog(
-                spec.name,
-                proxy=proxy,
-                client_version=config.providers.openai_codex.catalog_client_version,
-            )
-        else:
-            catalog = get_oauth_model_catalog(spec.name, proxy=proxy)
+        catalog = get_oauth_model_catalog(spec.name, proxy=proxy)
         rows = [
             {
                 "id": model.id,
